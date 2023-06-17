@@ -51,6 +51,7 @@ struct MiniChlinkFunctions
 	int (*SetEnableBreakpoints)( void * dev, int halt_on_break, int single_step );
 
 	int (*WaitForFlash)( void * dev );
+	int (*WaitForFlashFastProg)( void * dev );
 	int (*WaitForDoneOp)( void * dev, int ignore );
 
 	int (*PrintChipInfo)( void * dev );

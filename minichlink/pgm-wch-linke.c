@@ -121,6 +121,18 @@ int LEWriteReg32( void * dev, uint8_t reg_7_bit, uint32_t command )
 {
 	libusb_device_handle * devh = ((struct LinkEProgrammerStruct*)dev)->devh;
 
+	//fprintf(stderr, "Setting %08x to value %08x\n", reg_7_bit, command);
+
+	/*uint temp;
+
+	MCF.ReadReg32(dev, DMSTATUS, &temp);
+	fprintf(stderr, "LEWriteReg32 DMSTATUS: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMABSTRACTCS, &temp);
+	fprintf(stderr, "LEWriteReg32 DMABSTRACTCS: %08x\n", temp);*/
+
+	//usleep(20000);
+
 	const uint8_t iOP = 2; // op 2 = write
 	uint8_t req[] = {
 		0x81, 0x08, 0x06, reg_7_bit,

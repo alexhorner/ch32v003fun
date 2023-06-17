@@ -510,7 +510,7 @@ typedef struct
 #define EXTI_BASE                               (APB2PERIPH_BASE + 0x0400)
 #define GPIOA_BASE                              (APB2PERIPH_BASE + 0x0800)
 #define GPIOC_BASE                              (APB2PERIPH_BASE + 0x1000)
-#define GPIOD_BASE                              (APB2PERIPH_BASE + 0x1400)
+#define GPIOD_BASE                              (APB2PERIPH_BASE + 0x140C) //AH was 1400
 #define ADC1_BASE                               (APB2PERIPH_BASE + 0x2400)
 #define TIM1_BASE                               (APB2PERIPH_BASE + 0x2C00)
 #define SPI1_BASE                               (APB2PERIPH_BASE + 0x3000)

@@ -18,6 +18,9 @@ void Sleep(uint32_t dwMilliseconds);
 #include <unistd.h>
 #endif
 
+//#define CHUNKSIZE 64
+#define CHUNKSIZE 256
+//#define CHUNKSIZE 128
 
 static int64_t StringToMemoryAddress( const char * number ) __attribute__((used));
 static void StaticUpdatePROGBUFRegs( void * dev ) __attribute__((used));
@@ -26,6 +29,68 @@ int DefaultReadBinaryBlob( void * dev, uint32_t address_to_read_from, uint32_t r
 
 void TestFunction(void * v );
 struct MiniChlinkFunctions MCF;
+
+static void DumpDebugRegs(void* dev)
+{
+	int temp;
+
+	/*MCF.ReadReg32(dev, DMDATA0, &temp);
+	fprintf(stderr, "DMDATA0: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMDATA1, &temp);
+	fprintf(stderr, "DMDATA1: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMCONTROL, &temp);
+	fprintf(stderr, "DMCONTROL: %08x\n", temp);*/
+	
+	MCF.ReadReg32(dev, DMSTATUS, &temp);
+	fprintf(stderr, "DMSTATUS: %08x\n", temp);
+
+	/*MCF.ReadReg32(dev, DMHARTINFO, &temp);
+	fprintf(stderr, "DMHARTINFO: %08x\n", temp);*/
+
+	MCF.ReadReg32(dev, DMABSTRACTCS, &temp);
+	fprintf(stderr, "DMABSTRACTCS: %08x\n", temp);
+
+	/*MCF.ReadReg32(dev, DMCOMMAND, &temp);
+	fprintf(stderr, "DMCOMMAND: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMABSTRACTAUTO, &temp);
+	fprintf(stderr, "DMABSTRACTAUTO: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF0, &temp);
+	fprintf(stderr, "DMPROGBUF0: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF1, &temp);
+	fprintf(stderr, "DMPROGBUF1: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF2, &temp);
+	fprintf(stderr, "DMPROGBUF2: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF3, &temp);
+	fprintf(stderr, "DMPROGBUF3: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF4, &temp);
+	fprintf(stderr, "DMPROGBUF4: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF5, &temp);
+	fprintf(stderr, "DMPROGBUF5: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF6, &temp);
+	fprintf(stderr, "DMPROGBUF6: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMPROGBUF7, &temp);
+	fprintf(stderr, "DMPROGBUF7: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMCPBR, &temp);
+	fprintf(stderr, "DMCPBR: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMCFGR, &temp);
+	fprintf(stderr, "DMCFGR: %08x\n", temp);
+
+	MCF.ReadReg32(dev, DMSHDWCFGR, &temp);
+	fprintf(stderr, "DMSHDWCFGR: %08x\n", temp);*/
+}
 
 void * MiniCHLinkInitAsDLL( struct MiniChlinkFunctions ** MCFO )
 {
@@ -95,6 +160,13 @@ int main( int argc, char ** argv )
 			return -33;
 		}
 		printf( "Interface Setup\n" );
+
+		int temp;
+		MCF.ReadReg32(dev, DMSTATUS, &temp);
+		fprintf(stderr, "DMSTATUS: %08x\n", temp);
+
+		MCF.ReadReg32(dev, DMABSTRACTCS, &temp);
+		fprintf(stderr, "DMABSTRACTCS: %08x\n", temp);
 	}
 
 //	TestFunction( dev );
@@ -517,6 +589,8 @@ keep_going:
 
 				int is_flash = ( offset & 0xff000000 ) == 0x08000000 || ( offset & 0x1FFFF800 ) == 0x1FFFF000;
 				if( MCF.HaltMode ) MCF.HaltMode( dev, is_flash?0:5 );
+				usleep(20000);
+				fprintf(stderr, "post usleep\n");
 
 				if( MCF.WriteBinaryBlob )
 				{
@@ -639,19 +713,56 @@ static int64_t StringToMemoryAddress( const char * number )
 
 static int DefaultWaitForFlash( void * dev )
 {
+	fprintf(stderr, "Call to DefaultWaitForFlash\n");
+
 	uint32_t rw, timeout = 0;
 	do
 	{
 		rw = 0;
 		MCF.ReadWord( dev, (intptr_t)&FLASH->STATR, &rw ); // FLASH_STATR => 0x4002200C
-		if( timeout++ > 100 ) return -1;
-	} while(rw & 1);  // BSY flag.
+		if( timeout++ > 100 )
+		{
+			fprintf(stderr, "&FLASH->STATR: %08x\n", rw);
+			return -1;
+		}
+
+	} while((rw & 1)/* && !(rw & 0x20)*/);  // BSY flag.
+
+	//if (rw & 0x20) MCF.WriteWord(dev, (intptr_t)&FLASH->STATR, rw & ~0x20);
 
 	if( rw & FLASH_STATR_WRPRTERR )
 	{
 		fprintf( stderr, "Memory Protection Error\n" );
 		return -44;
 	}
+
+	return 0;
+}
+
+static int DefaultWaitForFlashFastProg( void * dev )
+{
+	fprintf(stderr, "Call to DefaultWaitForFlashFastProg\n");
+
+	uint32_t rw, timeout = 0;
+	do
+	{
+		rw = 0;
+		MCF.ReadWord( dev, (intptr_t)&FLASH->STATR, &rw ); // FLASH_STATR => 0x4002200C
+		if( timeout++ > 100 )
+		{
+			fprintf(stderr, "&FLASH->STATR: %08x\n", rw);
+			return -1;
+		}
+
+	} while(rw & 0x02);  // WRBSY flag.
+
+	//if (rw & 0x20) MCF.WriteWord(dev, (intptr_t)&FLASH->STATR, rw & ~0x20);
+
+	/*if( rw & FLASH_STATR_WRPRTERR )
+	{
+		fprintf( stderr, "Memory Protection Error\n" );
+		return -44;
+	}*/
 
 	return 0;
 }
@@ -939,6 +1050,7 @@ static int DefaultWriteWord( void * dev, uint32_t address_to_write, uint32_t dat
 		if( did_disable_req )
 		{
 			MCF.WriteReg32( dev, DMCOMMAND, 0x00271008 ); // Copy data to x8, and execute program.
+			//MCF.WriteReg32( dev, DMCOMMAND, 0x00261000 );
 			MCF.WriteReg32( dev, DMABSTRACTAUTO, 1 ); // Enable Autoexec.
 		}
 		iss->lastwriteflags = is_flash;
@@ -1002,7 +1114,8 @@ int DefaultWriteBinaryBlob( void * dev, uint32_t address_to_write, uint32_t blob
 	if( is_flash && MCF.BlockWrite64 && ( address_to_write & 0x3f ) == 0 && ( blob_size & 0x3f ) == 0 )
 	{
 		int i;
-		for( i = 0; i < blob_size; i+= 64 )
+		fprintf(stderr, "BlockWrite64 pre\n");
+		for( i = 0; i < blob_size; i+= CHUNKSIZE )
 		{
 			int r = MCF.BlockWrite64( dev, address_to_write + i, blob + i );
 			if( r )
@@ -1021,26 +1134,30 @@ int DefaultWriteBinaryBlob( void * dev, uint32_t address_to_write, uint32_t blob
 	}
 
 
-	uint8_t tempblock[64];
-	int sblock =  address_to_write >> 6;
-	int eblock = ( address_to_write + blob_size + 0x3f) >> 6;
+	uint8_t tempblock[CHUNKSIZE];
+	int sblock =  address_to_write / CHUNKSIZE;
+	int eblock = ( address_to_write + blob_size + (CHUNKSIZE - 1)) / CHUNKSIZE;
 	int b;
 	int rsofar = 0;
 
 	for( b = sblock; b < eblock; b++ )
 	{
-		int offset_in_block = address_to_write - (b * 64);
+		int offset_in_block = address_to_write - (b * CHUNKSIZE);
 		if( offset_in_block < 0 ) offset_in_block = 0;
-		int end_o_plus_one_in_block = ( address_to_write + blob_size ) - (b*64);
-		if( end_o_plus_one_in_block > 64 ) end_o_plus_one_in_block = 64;
-		int	base = b * 64;
+		int end_o_plus_one_in_block = ( address_to_write + blob_size ) - (b*CHUNKSIZE);
+		if( end_o_plus_one_in_block > CHUNKSIZE ) end_o_plus_one_in_block = CHUNKSIZE;
+		int	base = b * CHUNKSIZE;
 
-		if( offset_in_block == 0 && end_o_plus_one_in_block == 64 )
+		fprintf(stderr, "base: %x\n", base);
+
+		if( offset_in_block == 0 && end_o_plus_one_in_block == CHUNKSIZE )
 		{
+			fprintf(stderr, "We're at non wacky mode\n");
 			if( MCF.BlockWrite64 ) 
 			{
+				fprintf(stderr, "The wackbittinness is 64\n");
 				int r = MCF.BlockWrite64( dev, base, blob + rsofar );
-				rsofar += 64;
+				rsofar += CHUNKSIZE;
 				if( r )
 				{
 					fprintf( stderr, "Error writing block at memory %08x (error = %d)\n", base, r );
@@ -1049,40 +1166,50 @@ int DefaultWriteBinaryBlob( void * dev, uint32_t address_to_write, uint32_t blob
 			}
 			else 					// Block Write not avaialble
 			{
+				fprintf(stderr, "The wackbittinness is wordy\n");
 				if( is_flash )
 				{
-					MCF.Erase( dev, base, 64, 0 );
+					fprintf(stderr, "Section A\n");
+					MCF.Erase( dev, base, CHUNKSIZE, 0 );
 					MCF.WriteWord( dev, 0x40022010, CR_PAGE_PG ); // THIS IS REQUIRED, (intptr_t)&FLASH->CTLR = 0x40022010
 					MCF.WriteWord( dev, 0x40022010, CR_BUF_RST | CR_PAGE_PG );  // (intptr_t)&FLASH->CTLR = 0x40022010
+					if( MCF.WaitForFlash ) MCF.WaitForFlash( dev );
 				}
 
 				int j;
-				for( j = 0; j < 16; j++ )
+				for( j = 0; j < (CHUNKSIZE / 4); j++ )
 				{
 					uint32_t writeword;
 					memcpy( &writeword, blob + rsofar, 4 );
 					MCF.WriteWord( dev, j*4+base, writeword );
+					fprintf(stderr, "Section B -> j84+base: %x rsofar: %x j: %x\n", j*4+base, rsofar, j);
 					rsofar += 4;
+					if( MCF.WaitForFlashFastProg ) MCF.WaitForFlashFastProg( dev );
 				}
 
 				if( is_flash )
 				{
+					fprintf(stderr, "Section C\n");
 					MCF.WriteWord( dev, 0x40022014, base );  //0x40022014 -> FLASH->ADDR
 					MCF.WriteWord( dev, 0x40022010, CR_PAGE_PG|CR_STRT_Set ); // 0x40022010 -> FLASH->CTLR
 					if( MCF.WaitForFlash ) MCF.WaitForFlash( dev );
+					MCF.WriteWord(dev, (intptr_t)&FLASH->STATR, 0);
 				}
 			}
 		}
 		else
 		{
 			//Ok, we have to do something wacky.
+			fprintf(stderr, "We're at wacky mode\n");
+			break;
 			if( is_flash )
 			{
-				MCF.ReadBinaryBlob( dev, base, 64, tempblock );
+				MCF.ReadBinaryBlob( dev, base, CHUNKSIZE, tempblock );
 
 				// Permute tempblock
 				int tocopy = end_o_plus_one_in_block - offset_in_block;
 				memcpy( tempblock + offset_in_block, blob + rsofar, tocopy );
+				fprintf(stderr, "tocopy: %x\n", tocopy);
 				rsofar += tocopy;
 
 				if( MCF.BlockWrite64 ) 
@@ -1092,26 +1219,46 @@ int DefaultWriteBinaryBlob( void * dev, uint32_t address_to_write, uint32_t blob
 				}
 				else
 				{
-					MCF.Erase( dev, base, 64, 0 );
+					MCF.Erase( dev, base, CHUNKSIZE, 0 );
 					MCF.WriteWord( dev, 0x40022010, CR_PAGE_PG ); // THIS IS REQUIRED, (intptr_t)&FLASH->CTLR = 0x40022010
 					MCF.WriteWord( dev, 0x40022010, CR_BUF_RST | CR_PAGE_PG );  // (intptr_t)&FLASH->CTLR = 0x40022010
-
+					
 					int j;
-					for( j = 0; j < 16; j++ )
+					for( j = 0; j < CHUNKSIZE / 4; j++ )
 					{
+						fprintf(stderr, "Section WackyB -> j84+base: %x rsofar: %x j: %x\n", j*4+base, rsofar, j);
 						MCF.WriteWord( dev, j*4+base, *(uint32_t*)(tempblock + j * 4) );
 						rsofar += 4;
+						if( MCF.WaitForFlashFastProg ) MCF.WaitForFlashFastProg( dev );
 					}
 					MCF.WriteWord( dev, 0x40022014, base );  //0x40022014 -> FLASH->ADDR
 					MCF.WriteWord( dev, 0x40022010, CR_PAGE_PG|CR_STRT_Set ); // 0x40022010 -> FLASH->CTLR
 				}
-				if( MCF.WaitForFlash && MCF.WaitForFlash( dev ) ) goto timedout;
+
+				fprintf(stderr, "About to wait for flash...\n");
+				
+				break;
+
+				if( MCF.WaitForFlash && MCF.WaitForFlash( dev ) )
+				{
+					fprintf(stderr, "WaitForFlash timeout\n");
+
+					int temp;
+
+					MCF.ReadReg32(dev, DMSTATUS, &temp);
+					fprintf(stderr, "Timeout DMSTATUS: %08x\n", temp);
+
+					MCF.ReadReg32(dev, DMABSTRACTCS, &temp);
+					fprintf(stderr, "Timeout DMABSTRACTCS: %08x\n", temp);
+
+					goto timedout;
+				}
 			}
 			else
 			{
 				// Accessing RAM.  Be careful to only do the needed operations.
 				int j;
-				for( j = 0; j < 16; j++ )
+				for( j = 0; j < CHUNKSIZE / 4; j++ )
 				{
 					uint32_t taddy = j*4;
 					if( offset_in_block <= taddy && end_o_plus_one_in_block >= taddy + 4 )
@@ -1181,7 +1328,19 @@ timedout:
 static int DefaultReadWord( void * dev, uint32_t address_to_read, uint32_t * data )
 {
 	int r = 0;
+
+	//fprintf(stderr, "Pre ISS Dump:\n");
+	//DumpDebugRegs(dev);
+	//usleep(20000);
+
 	struct InternalState * iss = (struct InternalState*)(((struct ProgrammerStructBase*)dev)->internal);
+	
+	/*r |= MCF.WaitForDoneOp( dev, 0 );
+	fprintf(stderr, "Return value on check: %08x\n", r);
+	if( r ) fprintf( stderr, "Fault on DefaultReadWord initial \n" );*/
+
+	//fprintf(stderr, "Post ISS Dump:\n");
+	//DumpDebugRegs(dev);
 
 	int autoincrement = 1;
 	if( address_to_read == 0x40022010 || address_to_read == 0x4002200C )  // Don't autoincrement when checking flash flag. 
@@ -1311,7 +1470,7 @@ int DefaultErase( void * dev, uint32_t address, uint32_t length, int type )
 			// Step 6: Set the STAT bit of FLASH_CTLR register to '1' to initiate a fast page erase (64 bytes) action.
 			MCF.WriteWord( dev, (intptr_t)&FLASH->CTLR, CR_STRT_Set | CR_PAGE_ER );
 			if( MCF.WaitForFlash && MCF.WaitForFlash( dev ) ) return -99;
-			chunk_to_erase+=64;
+			chunk_to_erase+=CHUNKSIZE;
 		}
 	}
 	return 0;
@@ -1541,6 +1700,7 @@ static int DefaultHaltMode( void * dev, int mode )
 #endif
 
 	iss->processor_in_mode = mode;
+	//usleep(20000);
 	return 0;
 }
 
@@ -1881,6 +2041,8 @@ int SetupAutomaticHighLevelFunctions( void * dev )
 		MCF.PollTerminal = DefaultPollTerminal;
 	if( !MCF.WaitForFlash )
 		MCF.WaitForFlash = DefaultWaitForFlash;
+	if( !MCF.WaitForFlashFastProg )
+		MCF.WaitForFlashFastProg = DefaultWaitForFlashFastProg;
 	if( !MCF.WaitForDoneOp )
 		MCF.WaitForDoneOp = DefaultWaitForDoneOp;
 	if( !MCF.PrintChipInfo )
