@@ -382,8 +382,10 @@ typedef struct
     __IO uint32_t AHBPCENR;
     __IO uint32_t APB2PCENR;
     __IO uint32_t APB1PCENR;
-    __IO uint32_t RESERVED0;
+    __IO uint32_t RESERVED0; //307 RCC_BDCTLR
     __IO uint32_t RSTSCKR;
+    __IO uint32_t AHBRSTR; //307
+    __IO uint32_t CFGR2; //307
 } RCC_TypeDef;
 
 /* Serial Peripheral Interface */
