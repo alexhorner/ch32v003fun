@@ -19,6 +19,8 @@ struct MiniChlinkFunctions
 	int (*Control5v)( void * dev, int bOn );
 	int (*Unbrick)( void * dev ); // Turns on chip, erases everything, powers off.
 
+	int (*CheckImageSize)( void * dev, int size );
+
 	int (*Exit)( void * dev );
 
 	int (*HaltMode)( void * dev, int mode ); //0 for halt, 1 for reset, 2 for resume

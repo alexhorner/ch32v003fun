@@ -18,8 +18,8 @@ struct LinkEProgrammerStruct
 
 // For non-ch32v003 chips.
 //static int LEReadBinaryBlob( void * d, uint32_t offset, uint32_t amount, uint8_t * readbuff );
-//static int InternalLinkEHaltMode( void * d, int mode );
-//static int LEWriteBinaryBlob( void * d, uint32_t address_to_write, uint32_t len, uint8_t * blob );
+static int InternalLinkEHaltMode( void * d, int mode );
+static int LEWriteBinaryBlob( void * d, uint32_t address_to_write, uint32_t len, uint8_t * blob );
 
 #define WCHTIMEOUT 5000
 #define WCHCHECK(x) if( (status = x) ) { fprintf( stderr, "Bad USB Operation on " __FILE__ ":%d (%d)\n", __LINE__, status ); exit( status ); }
@@ -44,11 +44,11 @@ void wch_link_command( libusb_device_handle * devh, const void * command_v, int 
 
 	status = libusb_bulk_transfer( devh, 0x81, reply, replymax, transferred, WCHTIMEOUT );
 
-//	printf("wch_link_command reply (%d)", *transferred); for(int i = 0; i< *transferred; printf(" %02x",reply[i++])); printf("\n"); 
+//	printf("wch_link_command reply (%d)", *transferred); for(int i = 0; i< *transferred; printf(" %02x",reply[i++])); printf("\n");
 
 	if( status ) goto sendfail;
 	return;
-sendfail:
+	sendfail:
 	fprintf( stderr, "Error sending WCH command (%s): ", got_to_recv?"on recv":"on send" );
 	int i;
 	for( i = 0; i < commandlen; i++ )
@@ -81,7 +81,7 @@ static inline libusb_device_handle * wch_link_base_setup( int inhibit_startup )
 		fprintf( stderr, "Error: libusb_init_context() returned %d\n", status );
 		exit( status );
 	}
-	
+
 	libusb_device **list;
 	libusb_device *found = NULL;
 	ssize_t cnt = libusb_get_device_list(ctx, &list);
@@ -105,9 +105,9 @@ static inline libusb_device_handle * wch_link_base_setup( int inhibit_startup )
 		fprintf( stderr, "Error: couldn't open wch link device (libusb_open() = %d)\n", status );
 		return 0;
 	}
-		
+
 	WCHCHECK( libusb_claim_interface(devh, 0) );
-	
+
 	uint8_t rbuff[1024];
 	int transferred;
 	libusb_bulk_transfer( devh, 0x81, rbuff, 1024, &transferred, 1 ); // Clear out any pending transfers.  Don't wait though.
@@ -135,7 +135,7 @@ int LEWriteReg32( void * dev, uint8_t reg_7_bit, uint32_t command )
 
 	const uint8_t iOP = 2; // op 2 = write
 	uint8_t req[] = {
-		0x81, 0x08, 0x06, reg_7_bit,
+			0x81, 0x08, 0x06, reg_7_bit,
 			(command >> 24) & 0xff,
 			(command >> 16) & 0xff,
 			(command >> 8) & 0xff,
@@ -166,7 +166,7 @@ int LEReadReg32( void * dev, uint8_t reg_7_bit, uint32_t * commandresp )
 	uint32_t transferred;
 	uint8_t rbuff[128] = { 0 };
 	uint8_t req[] = {
-		0x81, 0x08, 0x06, reg_7_bit,
+			0x81, 0x08, 0x06, reg_7_bit,
 			0, 0, 0, 0,
 			iOP };
 	wch_link_command( devh, req, sizeof( req ), (int*)&transferred, rbuff, sizeof( rbuff ) );
@@ -233,7 +233,10 @@ static int LESetupInterface( void * d )
 	}
 
 	// TODO: What in the world is this?  It doesn't appear to be needed.
-	wch_link_command( dev, "\x81\x0c\x02\x09\x01", 5, 0, 0, 0 ); //Reply is: 820c0101
+	//wch_link_command( dev, "\x81\x0c\x02\x09\x01", 5, 0, 0, 0 ); //Reply is: 820c0101
+
+	// My capture differs in this case: \x05 instead of \x09 -> But does not seem to be needed
+	//wch_link_command( dev, "\x81\x0c\x02\x05\x01", 5, 0, 0, 0 ); //Reply is: 820c0101
 
 	// This puts the processor on hold to allow the debugger to run.
 	wch_link_command( dev, "\x81\x0d\x01\x02", 4, (int*)&transferred, rbuff, 1024 ); // Reply: Ignored, 820d050900300500
@@ -242,8 +245,16 @@ static int LESetupInterface( void * d )
 		fprintf(stderr, "link error, nothing connected to linker\n");
 		return -1;
 	}
-        uint32_t target_chip_type = ( rbuff[4] << 4) + (rbuff[5] >> 4);
-        fprintf(stderr, "Chip Type: %03x\n", target_chip_type);
+
+	uint32_t target_chip_type = ( rbuff[4] << 4) + (rbuff[5] >> 4);
+	fprintf(stderr, "Chip Type: %03x\n", target_chip_type);
+	if( target_chip_type == 0x307 || target_chip_type == 0x203 )
+	{
+		fprintf( stderr, "CH32V307 or CH32V203 Detected.  Allowing old-flash-mode for operation.\n" );
+		MCF.WriteBinaryBlob = LEWriteBinaryBlob;
+
+		wch_link_command( dev, "\x81\x0d\x01\x03", 4, (int*)&transferred, rbuff, 1024 ); // Reply: Ignored, 820d050900300500
+	}
 
 	// For some reason, if we don't do this sometimes the programmer starts in a hosey mode.
 	MCF.WriteReg32( d, DMCONTROL, 0x80000001 ); // Make the debug module work properly.
@@ -266,7 +277,8 @@ static int LESetupInterface( void * d )
 	}
 
 	// This puts the processor on hold to allow the debugger to run.
-	wch_link_command( dev, "\x81\x11\x01\x09", 4, (int*)&transferred, rbuff, 1024 ); // Reply: Chip ID + Other data (see below)
+	// Changed from \x09 to \x05
+	wch_link_command( dev, "\x81\x11\x01\x05", 4, (int*)&transferred, rbuff, 1024 ); // Reply: Chip ID + Other data (see below)
 	if( transferred != 20 )
 	{
 		fprintf( stderr, "Error: could not get part status\n" );
@@ -276,7 +288,20 @@ static int LESetupInterface( void * d )
 	fprintf( stderr, "Part UUID    : %02x-%02x-%02x-%02x-%02x-%02x-%02x-%02x\n", rbuff[4], rbuff[5], rbuff[6], rbuff[7], rbuff[8], rbuff[9], rbuff[10], rbuff[11] );
 	fprintf( stderr, "PFlags       : %02x-%02x-%02x-%02x\n", rbuff[12], rbuff[13], rbuff[14], rbuff[15] );
 	fprintf( stderr, "Part Type (B): %02x-%02x-%02x-%02x\n", rbuff[16], rbuff[17], rbuff[18], rbuff[19] );
-	
+
+	// Check for read protection
+	wch_link_command( dev, "\x81\x06\x01\x01", 4, (int*)&transferred, rbuff, 1024 );
+	if(transferred != 4) {
+		fprintf(stderr, "Error: could not get read protection status\n");
+		return -1;
+	}
+
+	if(rbuff[3] == 0x01) {
+		fprintf(stderr, "Read protection: enabled\n");
+	} else {
+		fprintf(stderr, "Read protection: disabled\n");
+	}
+
 	return 0;
 }
 
@@ -350,6 +375,24 @@ int LEExit( void * d )
 	return 0;
 }
 
+int LECheckImageSize( void * d, int size ) {
+	libusb_device_handle * dev = ((struct LinkEProgrammerStruct*)d)->devh;
+
+	uint8_t buffer[1024];
+	int transferred;
+
+	wch_link_command( dev, "\x81\x11\x01\x05", 4, (int*)&transferred, buffer, 1024 );
+	if( transferred != 20 )
+	{
+		fprintf( stderr, "Error: could not get part status\n" );
+		return -1;
+	}
+
+	int flashSize = ((buffer[2] << 8) | buffer[3]) * 1024;
+
+	return size < flashSize;
+}
+
 void * TryInit_WCHLinkE()
 {
 	libusb_device_handle * wch_linke_devh;
@@ -371,18 +414,53 @@ void * TryInit_WCHLinkE()
 	MCF.Unbrick = LEUnbrick;
 	MCF.ConfigureNRSTAsGPIO = LEConfigureNRSTAsGPIO;
 	MCF.ConfigureReadProtection = LEConfigureReadProtection;
+	MCF.CheckImageSize = LECheckImageSize;
 
 	MCF.Exit = LEExit;
 	return ret;
 };
 
 
-#if 0
+#if 1
 
 // In case you are using a non-CH32V003 board.
 
-
 const uint8_t * bootloader = (const uint8_t*)
+		"\x93\x77\x15\x00\x41\x11\x99\xcf\xb7\x06\x67\x45\xb7\x27\x02\x40" \
+"\x93\x86\x36\x12\x37\x97\xef\xcd\xd4\xc3\x13\x07\xb7\x9a\xd8\xc3" \
+"\xd4\xd3\xd8\xd3\x93\x77\x25\x00\x95\xc7\xb7\x27\x02\x40\x98\x4b" \
+"\xad\x66\x37\x38\x00\x40\x13\x67\x47\x00\x98\xcb\x98\x4b\x93\x86" \
+"\xa6\xaa\x13\x67\x07\x04\x98\xcb\xd8\x47\x05\x8b\x61\xeb\x98\x4b" \
+"\x6d\x9b\x98\xcb\x93\x77\x45\x00\xa9\xcb\x93\x07\xf6\x0f\xa1\x83" \
+"\x2e\xc0\x2d\x68\x81\x76\x3e\xc4\xb7\x08\x02\x00\xb7\x27\x02\x40" \
+"\x37\x33\x00\x40\x13\x08\xa8\xaa\xfd\x16\x98\x4b\x33\x67\x17\x01" \
+"\x98\xcb\x02\x47\xd8\xcb\x98\x4b\x13\x67\x07\x04\x98\xcb\xd8\x47" \
+"\x05\x8b\x41\xeb\x98\x4b\x75\x8f\x98\xcb\x02\x47\x13\x07\x07\x10" \
+"\x3a\xc0\x22\x47\x7d\x17\x3a\xc4\x69\xfb\x93\x77\x85\x00\xd5\xcb" \
+"\x93\x07\xf6\x0f\x2e\xc0\xa1\x83\x3e\xc4\x37\x27\x02\x40\x1c\x4b" \
+"\xc1\x66\x41\x68\xd5\x8f\x1c\xcb\xb7\x16\x00\x20\xb7\x27\x02\x40" \
+"\x93\x08\x00\x04\x37\x03\x20\x00\x98\x4b\x33\x67\x07\x01\x98\xcb" \
+"\xd8\x47\x05\x8b\x75\xff\x02\x47\x3a\xc2\x46\xc6\x32\x47\x0d\xef" \
+"\x98\x4b\x33\x67\x67\x00\x98\xcb\xd8\x47\x05\x8b\x75\xff\xd8\x47" \
+"\x41\x8b\x39\xc3\xd8\x47\xc1\x76\xfd\x16\x13\x67\x07\x01\xd8\xc7" \
+"\x98\x4b\x21\x45\x75\x8f\x98\xcb\x41\x01\x02\x90\x23\x20\xd8\x00" \
+"\x25\xb7\x23\x20\x03\x01\xa5\xb7\x12\x47\x13\x8e\x46\x00\x94\x42" \
+"\x14\xc3\x12\x47\x11\x07\x3a\xc2\x32\x47\x7d\x17\x3a\xc6\xd8\x47" \
+"\x09\x8b\x75\xff\xf2\x86\x5d\xb7\x02\x47\x13\x07\x07\x10\x3a\xc0" \
+"\x22\x47\x7d\x17\x3a\xc4\x49\xf3\x98\x4b\xc1\x76\xfd\x16\x75\x8f" \
+"\x98\xcb\x41\x89\x15\xc9\x2e\xc0\x0d\x06\x02\xc4\x09\x82\x32\xc6" \
+"\xb7\x17\x00\x20\x98\x43\x13\x86\x47\x00\xa2\x47\x82\x46\x8a\x07" \
+"\xb6\x97\x9c\x43\x63\x1c\xf7\x00\xa2\x47\x85\x07\x3e\xc4\xa2\x46" \
+"\x32\x47\xb2\x87\xe3\xe0\xe6\xfe\x01\x45\xbd\xbf\x41\x45\xad\xbf" \
+"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" \
+"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" \
+"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" \
+"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" \
+"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" \
+"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff";
+
+
+/*const uint8_t * bootloader = (const uint8_t*)
 "\x21\x11\x22\xca\x26\xc8\x93\x77\x15\x00\x99\xcf\xb7\x06\x67\x45" \
 "\xb7\x27\x02\x40\x93\x86\x36\x12\x37\x97\xef\xcd\xd4\xc3\x13\x07" \
 "\xb7\x9a\xd8\xc3\xd4\xd3\xd8\xd3\x93\x77\x25\x00\x9d\xc7\xb7\x27" \
@@ -414,19 +492,18 @@ const uint8_t * bootloader = (const uint8_t*)
 "\xa2\x46\x32\x47\xb2\x87\xe3\xe0\xe6\xfe\x01\x45\x61\xb7\x41\x45" \
 "\x51\xb7\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" \
 "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff" \
-"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff";
+"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff";*/
 
 int bootloader_len = 512;
 #endif
 
-#if 0
 static int InternalLinkEHaltMode( void * d, int mode )
 {
 	libusb_device_handle * dev = ((struct LinkEProgrammerStruct*)d)->devh;
 	if( mode == ((struct LinkEProgrammerStruct*)d)->lasthaltmode )
 		return 0;
 	((struct LinkEProgrammerStruct*)d)->lasthaltmode = mode;
-	
+
 	if( mode == 0 )
 	{
 		printf( "Holding in reset\n" );
@@ -444,7 +521,6 @@ static int InternalLinkEHaltMode( void * d, int mode )
 	}
 	return 0;
 }
-#endif
 
 #if 0
 static int LEReadBinaryBlob( void * d, uint32_t offset, uint32_t amount, uint8_t * readbuff )
@@ -468,7 +544,7 @@ static int LEReadBinaryBlob( void * d, uint32_t offset, uint32_t amount, uint8_t
 	// First 4 bytes are big-endian location.
 	// Next 4 bytes are big-endian amount.
 	uint8_t readop[11] = { 0x81, 0x03, 0x08, };
-	
+
 	readop[3] = (offset>>24)&0xff;
 	readop[4] = (offset>>16)&0xff;
 	readop[5] = (offset>>8)&0xff;
@@ -478,7 +554,7 @@ static int LEReadBinaryBlob( void * d, uint32_t offset, uint32_t amount, uint8_t
 	readop[8] = (amount>>16)&0xff;
 	readop[9] = (amount>>8)&0xff;
 	readop[10] = (amount>>0)&0xff;
-	
+
 	wch_link_command( (libusb_device_handle *)dev, readop, 11, 0, 0, 0 );
 
 	// Perform operation
@@ -499,15 +575,14 @@ static int LEReadBinaryBlob( void * d, uint32_t offset, uint32_t amount, uint8_t
 	for( i = 0; i < readbuffplace/4; i++ )
 	{
 		uint32_t r = ((uint32_t*)readbuff)[i];
-		((uint32_t*)readbuff)[i] = (r>>24) | ((r & 0xff0000) >> 8) | ((r & 0xff00)<<8) | (( r & 0xff )<<24); 
+		((uint32_t*)readbuff)[i] = (r>>24) | ((r & 0xff0000) >> 8) | ((r & 0xff00)<<8) | (( r & 0xff )<<24);
 	}
 
 	return 0;
 }
 #endif
 
-#if 0
-static int LEWriteBinaryBlob( void * d, uint32_t address_to_write, uint32_t len, uint8_t * blob )
+static int LEWriteBinaryBlob( void * d, uint32_t address, uint32_t len, uint8_t * blob )
 {
 	libusb_device_handle * dev = ((struct LinkEProgrammerStruct*)d)->devh;
 
@@ -518,60 +593,74 @@ static int LEWriteBinaryBlob( void * d, uint32_t address_to_write, uint32_t len,
 	uint8_t rbuff[1024];
 	int transferred;
 
-	int padlen = ((len-1) & (~0x3f)) + 0x40;
+	int padlen = ((len-1) & (~0xff)) + 0x100;
 
 	wch_link_command( (libusb_device_handle *)dev, "\x81\x06\x01\x01", 4, 0, 0, 0 );
 	wch_link_command( (libusb_device_handle *)dev, "\x81\x06\x01\x01", 4, 0, 0, 0 ); // Not sure why but it seems to work better when we request twice.
 
 	// This contains the write data quantity, in bytes.  (The last 2 octets)
 	// Then it just rollllls on in.
-	char rksbuff[11] = { 0x81, 0x01, 0x08, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-	rksbuff[9] = len >> 8;
-	rksbuff[10] = len & 0xff;
+	char rksbuff[11] = { 0x81, 0x01, 0x08,
+						 (uint8_t)(address >> 24), (uint8_t)(address >> 16), (uint8_t)(address >> 8), (uint8_t)(address & 0xff),
+						 (uint8_t)(len >> 24), (uint8_t)(len >> 16), (uint8_t)(len >> 8), (uint8_t)(len & 0xff) };
+
 	wch_link_command( (libusb_device_handle *)dev, rksbuff, 11, 0, 0, 0 );
-	
+
 	wch_link_command( (libusb_device_handle *)dev, "\x81\x02\x01\x05", 4, 0, 0, 0 );
-	
+
 	int pplace = 0;
-	for( pplace = 0; pplace < bootloader_len; pplace += 64 )
+	for( pplace = 0; pplace < bootloader_len; pplace += 128 )
 	{
-		WCHCHECK( libusb_bulk_transfer( (libusb_device_handle *)dev, 0x02, (uint8_t*)(bootloader+pplace), 64, &transferred, WCHTIMEOUT ) );
+		WCHCHECK( libusb_bulk_transfer( (libusb_device_handle *)dev, 0x02, (uint8_t*)(bootloader+pplace), 128, &transferred, WCHTIMEOUT ) );
 	}
-	
+
+	// Send it one time and forget about it?
+	wch_link_command( (libusb_device_handle *)dev, "\x81\x02\x01\x07", 4, &transferred, rbuff, 1024 );
+
 	for( i = 0; i < 10; i++ )
 	{
 		wch_link_command( (libusb_device_handle *)dev, "\x81\x02\x01\x07", 4, &transferred, rbuff, 1024 );
-		if( transferred == 4 && rbuff[0] == 0x82 && rbuff[1] == 0x02 && rbuff[2] == 0x01 && rbuff[3] == 0x07 )
+		if( transferred == 4 &&  rbuff[3] == 0x07 )
 		{
+			fprintf( stderr, "Got 0x07 response to execution of memory! %02x-%02x-%02x-%02x\n", rbuff[0], rbuff[1], rbuff[2], rbuff[3]);
 			break;
 		}
-	} 
+	}
 	if( i == 10 )
 	{
-		fprintf( stderr, "Error, confusing respones to 02/01/07\n" );
+		fprintf( stderr, "Error, confusing responses to execution of memory\n" );
 		exit( -109 );
 	}
-	
+
 	wch_link_command( (libusb_device_handle *)dev, "\x81\x02\x01\x02", 4, 0, 0, 0 );
 
-	for( pplace = 0; pplace < padlen; pplace += 64 )
+	for( pplace = 0; pplace < padlen; pplace += 256 )
 	{
-		if( pplace + 64 > len )
+		if( pplace + 256 > len )
 		{
-			uint8_t paddeddata[64];
-			int gap = pplace + 64 - len;
+			uint8_t paddeddata[256];
+			int gap = pplace + 256 - len;
 			int okcopy = len - pplace;
 			memcpy( paddeddata, blob + pplace, okcopy );
 			memset( paddeddata + okcopy, 0xff, gap );
-			WCHCHECK( libusb_bulk_transfer( (libusb_device_handle *)dev, 0x02, paddeddata, 64, &transferred, WCHTIMEOUT ) );
+			WCHCHECK( libusb_bulk_transfer( (libusb_device_handle *)dev, 0x02, paddeddata, 256, &transferred, WCHTIMEOUT ) );
 		}
 		else
 		{
-			WCHCHECK( libusb_bulk_transfer( (libusb_device_handle *)dev, 0x02, blob+pplace, 64, &transferred, WCHTIMEOUT ) );
+			WCHCHECK( libusb_bulk_transfer( (libusb_device_handle *)dev, 0x02, blob+pplace, 256, &transferred, WCHTIMEOUT ) );
 		}
+
+		/*
+		// Test with Read and check - does not work
+		libusb_bulk_transfer( (libusb_device_handle*)dev, 0x82, rbuff, 1024, &transferred, WCHTIMEOUT );
+		if( transferred != 4 || (rbuff[3] != 0x02 && rbuff[3] != 0x04) )
+		{
+			fprintf( stderr, "Error while programming: %02x-%02x-%02x-%02x\n", rbuff[0], rbuff[1], rbuff[2], rbuff[3] );
+			exit( -109 );
+		}*/
 	}
+
+	// End program
+	wch_link_command( (libusb_device_handle *)dev, "\x81\x02\x01\x0c", 4, 0, 0, 0 );
 	return 0;
 }
-
-
-#endif

@@ -581,10 +581,12 @@ keep_going:
 					fprintf( stderr, "Error: File I/O Fault.\n" );
 					exit( -10 );
 				}
-				if( len > 16384 )
-				{
-					fprintf( stderr, "Error: Image for CH32V003 too large (%d)\n", len );
-					exit( -9 );
+
+				if ( MCF.CheckImageSize ) {
+					if ( !MCF.CheckImageSize( dev, len ) ) {
+						fprintf( stderr, "Error: Image too large (%d)\n", len );
+						exit( -9 );
+					}
 				}
 
 				int is_flash = ( offset & 0xff000000 ) == 0x08000000 || ( offset & 0x1FFFF800 ) == 0x1FFFF000;
@@ -1997,6 +1999,12 @@ int DefaultVoidHighLevelState( void * dev )
 	return 0;
 }
 
+int DefaultCheckImageSize( int size )
+{
+	// TODO: Replace with low-level implementation
+	return size < 16384;
+}
+
 int SetupAutomaticHighLevelFunctions( void * dev )
 {
 	// Will populate high-level functions from low-level functions.
@@ -2053,6 +2061,8 @@ int SetupAutomaticHighLevelFunctions( void * dev )
 		MCF.ConfigureNRSTAsGPIO = DefaultConfigureNRSTAsGPIO;
 	if( !MCF.VoidHighLevelState )
 		MCF.VoidHighLevelState = DefaultVoidHighLevelState;
+	if( !MCF.CheckImageSize )
+		MCF.CheckImageSize = DefaultCheckImageSize;
 
 	struct InternalState * iss = calloc( 1, sizeof( struct InternalState ) );
 	iss->ram_base = 0x20000000;
